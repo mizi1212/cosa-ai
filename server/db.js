@@ -6,7 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
+const DB_FILE = '/tmp/db.json';
 
 let db = { users: [], chats: [], codes: {}, usage: {}, transactions: [] };
 
