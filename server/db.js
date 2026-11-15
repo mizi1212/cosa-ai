@@ -1,222 +1,245 @@
-// ═══════════════════════════════════════════════════════════
-// COSA AI — قاعدة بيانات JSON خفيفة مع كتابة ذرّية
-// ═══════════════════════════════════════════════════════════
-const fs = require('fs');
-const path = require('path');
+const { Pool } = require('pg');
 const crypto = require('crypto');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_FILE = '/tmp/db.json';
+// الاتصال بقاعدة البيانات عبر Vercel Environment Variables
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
-let db = { users: [], chats: [], codes: {}, usage: {}, transactions: [] };
-
-function load() {
+// إنشاء الجداول تلقائياً إذا لم تكن موجودة
+async function initDB() {
   try {
-    if (fs.existsSync(DB_FILE)) {
-      db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-      db.codes = db.codes || {};
-      db.usage = db.usage || {};
-      db.transactions = db.transactions || [];
-      db.users = db.users || [];
-      db.chats = db.chats || [];
-    }
-  } catch (e) {
-    console.error('⚠️  تعذر قراءة قاعدة البيانات، سيتم البدء بقاعدة فارغة:', e.message);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(50) PRIMARY KEY,
+        email VARCHAR(255) UNIQUE,
+        name VARCHAR(255),
+        password_hash VARCHAR(255),
+        admin BOOLEAN DEFAULT FALSE,
+        plan VARCHAR(20) DEFAULT 'free',
+        pro_expires_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS chats (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) REFERENCES users(id) ON DELETE CASCADE,
+        title VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        chat_id VARCHAR(50) REFERENCES chats(id) ON DELETE CASCADE,
+        role VARCHAR(20),
+        content TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS codes (
+        code VARCHAR(50) PRIMARY KEY,
+        plan VARCHAR(20),
+        days INT,
+        used_by VARCHAR(50),
+        revoked BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS usage (
+        user_id VARCHAR(50),
+        date DATE,
+        count INT DEFAULT 0,
+        PRIMARY KEY (user_id, date)
+      );
+      CREATE TABLE IF NOT EXISTS transactions (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50),
+        type VARCHAR(50),
+        source VARCHAR(50),
+        code VARCHAR(50),
+        days INT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('✅ Database tables ready');
+  } catch (err) {
+    console.error('❌ Error initializing DB:', err.message);
   }
 }
-
-// كتابة ذرّية عبر طابور (تمنع تلف الملف عند الطلبات المتزامنة)
-let writeQueue = Promise.resolve();
-function save() {
-  writeQueue = writeQueue.then(() => {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    const tmp = DB_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(db));
-    fs.renameSync(tmp, DB_FILE);
-  });
-  return writeQueue;
-}
+initDB();
 
 const uid = () => crypto.randomBytes(12).toString('hex');
 const now = () => new Date().toISOString();
 
 // ── المستخدمون ────────────────────────────────────────────
-function findUserByEmail(email) {
+async function findUserByEmail(email) {
   const target = String(email || '').toLowerCase();
   if (!target) return undefined;
-  return db.users.find(u => u.email && u.email.toLowerCase() === target);
-}
-function findUserById(id) {
-  return db.users.find(u => u.id === id);
-}
-function createUser({ email, name, passwordHash, admin }) {
-  const user = {
-    id: uid(), email: String(email).toLowerCase().trim(), name: String(name).trim(),
-    passwordHash, admin: !!admin, plan: 'free',
-    proExpiresAt: null, createdAt: now()
-  };
-  db.users.push(user);
-  save();
-  return user;
-}
-function updateUser(id, patch) {
-  const u = findUserById(id);
-  if (u) { Object.assign(u, patch); save(); }
-  return u;
+  const res = await pool.query('SELECT * FROM users WHERE LOWER(email) = $1', [target]);
+  return res.rows[0];
 }
 
-// ── الضيوف (بدون حساب — بمعرّف جهاز) ─────────────────────
-function getGuest(deviceId) {
-  let g = db.users.find(u => u.id === 'guest:' + deviceId);
-  if (!g) {
-    g = { id: 'guest:' + deviceId, email: null, name: 'ضيف', guest: true, plan: 'free', proExpiresAt: null, createdAt: now() };
-    db.users.push(g);
-    save();
+async function findUserById(id) {
+  const res = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+  return res.rows[0];
+}
+
+async function createUser({ email, name, passwordHash, admin }) {
+  const user = {
+    id: uid(),
+    email: String(email).toLowerCase().trim(),
+    name: String(name).trim(),
+    password_hash: passwordHash,
+    admin: !!admin,
+    plan: 'free'
+  };
+  await pool.query(
+    'INSERT INTO users (id, email, name, password_hash, admin, plan) VALUES ($1, $2, $3, $4, $5, $6)',
+    [user.id, user.email, user.name, user.password_hash, user.admin, user.plan]
+  );
+  return { ...user, passwordHash }; // keep original format for server.js
+}
+
+async function updateUser(id, patch) {
+  if (patch.name) await pool.query('UPDATE users SET name = $1 WHERE id = $2', [patch.name, id]);
+  if (patch.passwordHash) await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [patch.passwordHash, id]);
+  return await findUserById(id);
+}
+
+// ── الضيوف ────────────────────────────────────────────────
+async function getGuest(deviceId) {
+  const guestId = 'guest:' + deviceId;
+  let user = await findUserById(guestId);
+  if (!user) {
+    await pool.query(
+      'INSERT INTO users (id, name, plan) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+      [guestId, 'ضيف', 'free']
+    );
+    user = { id: guestId, name: 'ضيف', plan: 'free', guest: true };
   }
-  return g;
+  return { ...user, guest: true };
 }
 
 // ── الاشتراك ──────────────────────────────────────────────
 function isPro(user) {
-  if (!user || user.plan !== 'pro' || !user.proExpiresAt) return false;
-  if (new Date(user.proExpiresAt) < new Date()) {
-    user.plan = 'free';
-    save();
-    return false;
-  }
+  if (!user || user.plan !== 'pro' || !user.pro_expires_at) return false;
+  if (new Date(user.pro_expires_at) < new Date()) return false;
   return true;
 }
-function activatePro(user, days, source, code) {
-  const base = (isPro(user) ? new Date(user.proExpiresAt) : new Date());
+
+async function activatePro(user, days, source, code) {
+  const base = (isPro(user) && user.pro_expires_at) ? new Date(user.pro_expires_at) : new Date();
   base.setDate(base.getDate() + days);
-  user.plan = 'pro';
-  user.proExpiresAt = base.toISOString();
-  db.transactions.push({ id: uid(), userId: user.id, type: 'activation', source, code: code || null, days, at: now() });
-  save();
-  return user;
+  const expiresAt = base.toISOString();
+  
+  await pool.query(
+    'UPDATE users SET plan = $1, pro_expires_at = $2 WHERE id = $3',
+    ['pro', expiresAt, user.id]
+  );
+  await pool.query(
+    'INSERT INTO transactions (id, user_id, type, source, code, days) VALUES ($1, $2, $3, $4, $5, $6)',
+    [uid(), user.id, 'activation', source, code || null, days]
+  );
+  return { ...user, plan: 'pro', proExpiresAt: expiresAt, pro_expires_at: expiresAt };
 }
 
-// ── عداد الرسائل اليومي (على الخادم) ─────────────────────
+// ── عداد الرسائل اليومي ───────────────────────────────────
 function todayKey() { return new Date().toISOString().slice(0, 10); }
-function getUsage(userId) {
-  const k = todayKey() + ':' + userId;
-  db.usage[k] = db.usage[k] || 0;
-  return db.usage[k];
+
+async function getUsage(userId) {
+  const res = await pool.query('SELECT count FROM usage WHERE user_id = $1 AND date = $2', [userId, todayKey()]);
+  return res.rows[0] ? res.rows[0].count : 0;
 }
-function incrementUsage(userId) {
-  const k = todayKey() + ':' + userId;
-  db.usage[k] = (db.usage[k] || 0) + 1;
-  save();
-  return db.usage[k];
-}
-function pruneUsage() {
-  const cutoff = new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10);
-  let changed = false;
-  for (const k of Object.keys(db.usage)) {
-    if (k.slice(0, 10) < cutoff) { delete db.usage[k]; changed = true; }
-  }
-  if (changed) save();
+
+async function incrementUsage(userId) {
+  const date = todayKey();
+  await pool.query(
+    'INSERT INTO usage (user_id, date, count) VALUES ($1, $2, 1) ON CONFLICT (user_id, date) DO UPDATE SET count = usage.count + 1',
+    [userId, date]
+  );
+  return await getUsage(userId);
 }
 
 // ── المحادثات ─────────────────────────────────────────────
-function userChats(userId) {
-  return db.chats
-    .filter(c => c.userId === userId)
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
-    .map(c => ({ id: c.id, title: c.title, updatedAt: c.updatedAt, messageCount: c.messages.length }));
-}
-function findChat(userId, chatId) {
-  return db.chats.find(c => c.id === chatId && c.userId === userId);
-}
-function createChat(userId, title) {
-  const chat = { id: uid(), userId, title: title || 'محادثة جديدة', messages: [], createdAt: now(), updatedAt: now() };
-  db.chats.push(chat);
-  save();
+async function createChat(userId, title = 'محادثة جديدة') {
+  const chat = { id: uid(), user_id: userId, title, messages: [] };
+  await pool.query('INSERT INTO chats (id, user_id, title) VALUES ($1, $2, $3)', [chat.id, userId, title]);
   return chat;
 }
-function appendMessages(chatId, msgs) {
-  const c = db.chats.find(x => x.id === chatId);
-  if (!c) return null;
-  c.messages.push(...msgs);
-  c.updatedAt = now();
-  save();
-  return c;
+
+async function userChats(userId) {
+  const res = await pool.query('SELECT id, title, created_at FROM chats WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+  return res.rows;
 }
-function renameChat(userId, chatId, title) {
-  const c = findChat(userId, chatId);
-  if (!c) return null;
-  c.title = String(title).trim().slice(0, 80) || c.title;
-  save();
-  return c;
+
+async function findChat(userId, chatId) {
+  const chatRes = await pool.query('SELECT * FROM chats WHERE id = $1 AND user_id = $2', [chatId, userId]);
+  if (chatRes.rows.length === 0) return null;
+  const chat = chatRes.rows[0];
+  const msgRes = await pool.query('SELECT role, content, created_at as at FROM messages WHERE chat_id = $1 ORDER BY id ASC', [chatId]);
+  chat.messages = msgRes.rows;
+  return chat;
 }
-function deleteChat(userId, chatId) {
-  const i = db.chats.findIndex(c => c.id === chatId && c.userId === userId);
-  if (i === -1) return false;
-  db.chats.splice(i, 1);
-  save();
+
+async function appendMessages(chatId, messages) {
+  for (const m of messages) {
+    await pool.query('INSERT INTO messages (chat_id, role, content) VALUES ($1, $2, $3)', [chatId, m.role, m.content]);
+  }
+}
+
+async function renameChat(userId, chatId, newTitle) {
+  await pool.query('UPDATE chats SET title = $1 WHERE id = $2 AND user_id = $3', [newTitle, chatId, userId]);
   return true;
 }
-function deleteAllChats(userId) {
-  db.chats = db.chats.filter(c => c.userId !== userId);
-  save();
-}
-function autoTitle(firstUserText) {
-  const t = String(firstUserText).replace(/\s+/g, ' ').trim();
-  return (t.length > 42 ? t.slice(0, 42) + '…' : t) || 'محادثة جديدة';
+
+async function deleteChat(userId, chatId) {
+  const res = await pool.query('DELETE FROM chats WHERE id = $1 AND user_id = $2', [chatId, userId]);
+  return res.rowCount > 0;
 }
 
-// ── أكواد التفعيل ─────────────────────────────────────────
-function generateCode(plan, days) {
-  const raw = crypto.randomBytes(6).toString('hex').toUpperCase();
-  const prefix = plan === 'vip' ? 'VIP' : plan === 'yearly' ? 'Y' : 'M';
-  const code = `COSA-${prefix}-${raw}`;
-  db.codes[code] = { plan, days, createdAt: now(), usedBy: null, usedAt: null, revoked: false };
-  save();
+async function deleteAllChats(userId) {
+  await pool.query('DELETE FROM chats WHERE user_id = $1', [userId]);
+}
+
+function autoTitle(text) {
+  return text.slice(0, 30) + (text.length > 30 ? '...' : '');
+}
+
+// ── الأكواد والإدارة ──────────────────────────────────────
+async function generateCode(plan, days) {
+  const code = 'COSA-' + plan.toUpperCase() + '-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+  await pool.query('INSERT INTO codes (code, plan, days) VALUES ($1, $2, $3)', [code, plan, days]);
   return code;
 }
-// تفعيل ذرّي: فحص + تعليم في خطوة واحدة
-let codeLock = Promise.resolve();
-function redeemCode(user, code) {
-  const run = codeLock.then(() => {
-    const c = db.codes[code];
-    if (!c) return { ok: false, error: 'الكود غير صحيح' };
-    if (c.revoked) return { ok: false, error: 'هذا الكود ملغى' };
-    if (c.usedBy) return { ok: false, error: 'هذا الكود مستخدم بالفعل' };
-    c.usedBy = user.id;
-    c.usedAt = now();
-    activatePro(user, c.days, 'code', code);
-    return { ok: true, days: c.days, plan: c.plan };
-  });
-  codeLock = run.catch(() => {});
-  return run;
+
+async function redeemCode(user, code) {
+  const res = await pool.query('SELECT * FROM codes WHERE code = $1 FOR UPDATE', [code]);
+  const c = res.rows[0];
+  if (!c) return { ok: false, error: 'الكود غير صحيح' };
+  if (c.revoked) return { ok: false, error: 'الكود ملغى' };
+  if (c.used_by) return { ok: false, error: 'الكود مستخدم مسبقاً' };
+
+  await pool.query('UPDATE codes SET used_by = $1 WHERE code = $2', [user.id, code]);
+  await activatePro(user, c.days, 'code', code);
+  return { ok: true, plan: c.plan, days: c.days };
 }
 
-// ── الإحصاءات ─────────────────────────────────────────────
-function stats() {
-  const realUsers = db.users.filter(u => !u.guest);
-  const proUsers = db.users.filter(u => !u.guest && isPro(u));
-  const msgCount = db.chats.reduce((n, c) => n + c.messages.length, 0);
-  const usedCodes = Object.values(db.codes).filter(c => c.usedBy).length;
-  const totalCodes = Object.keys(db.codes).length;
+async function stats() {
+  const users = await pool.query('SELECT COUNT(*) FROM users WHERE email IS NOT NULL');
+  const totalUsers = parseInt(users.rows[0].count);
+  const guests = await pool.query('SELECT COUNT(*) FROM users WHERE id LIKE \'guest:%\'');
+  const chats = await pool.query('SELECT COUNT(*) FROM chats');
+  const codesTotal = await pool.query('SELECT COUNT(*) FROM codes');
+  const codesUsed = await pool.query('SELECT COUNT(*) FROM codes WHERE used_by IS NOT NULL');
   return {
-    users: realUsers.length,
-    guests: db.users.length - realUsers.length,
-    activePro: proUsers.length,
-    messages: msgCount,
-    chats: db.chats.length,
-    codes: { total: totalCodes, used: usedCodes },
-    todayUsage: Object.keys(db.usage).filter(k => k.startsWith(todayKey())).reduce((n, k) => n + db.usage[k], 0)
+    totalUsers,
+    guests: parseInt(guests.rows[0].count),
+    totalChats: parseInt(chats.rows[0].count),
+    codesGenerated: parseInt(codesTotal.rows[0].count),
+    codesUsed: parseInt(codesUsed.rows[0].count)
   };
 }
 
-load();
-setInterval(pruneUsage, 6 * 3600 * 1000).unref();
-
 module.exports = {
-  db, save, uid, now,
   findUserByEmail, findUserById, createUser, updateUser, getGuest,
-  isPro, activatePro,
-  getUsage, incrementUsage,
-  userChats, findChat, createChat, appendMessages, renameChat, deleteChat, deleteAllChats, autoTitle,
-  generateCode, redeemCode, stats
+  isPro, activatePro, getUsage, incrementUsage,
+  createChat, userChats, findChat, appendMessages, renameChat, deleteChat, deleteAllChats, autoTitle,
+  generateCode, redeemCode, stats, now, save: () => {} // save is no-op now
 };
