@@ -1,8 +1,16 @@
-
 {
   "version": 2,
   "regions": ["iad1"],
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/server/server.js" }
+  "builds": [
+    {
+      "src": "server/server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "server/server.js"
+    }
   ]
 }
