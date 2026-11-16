@@ -33,6 +33,32 @@
   --input-bg:rgba(22,22,36,.78);
   --shadow:0 18px 50px rgba(0,0,0,.5);
   --glass-hi:inset 0 1px 0 rgba(255,255,255,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{background:var(--bg);min-height:100%;color-scheme:light}
+html[data-theme="dark"]{color-scheme:dark}
+body{
+  font-family:'Cairo',system-ui,sans-serif;
+  color:var(--text);
+  overflow-x:hidden;
+  min-height:100vh;
+  transition:color .3s;
+  font-size:var(--app-font-size,13px);
+}
+/* هالة ضوئية خلف التطبيق */
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(60% 40% at 90% -5%,rgba(118,87,255,.28),transparent 70%),
+    radial-gradient(50% 35% at 5% 12%,rgba(238,98,210,.16),transparent 70%),
+    radial-gradient(70% 40% at 50% 112%,rgba(78,140,255,.20),transparent 70%);
+}
+[data-theme="light"] body::before{opacity:.55}
+button,input,textarea,select{font-family:inherit;font-size:inherit}
+button{border:0;cursor:pointer;background:none;color:inherit;line-height:1}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--primary2);outline-offset:2px}
+
+/* الأيقونات (SVG) */
 .i{width:1.15em;height:1.15em;flex:none;display:block}
 .app{width:100%;max-width:680px;margin:auto;min-height:100vh;position:relative}
 
@@ -70,6 +96,41 @@
 .counter-top span{color:var(--muted);display:inline-flex;align-items:center;gap:5px}
 .counter-top strong{font-size:12px;direction:ltr}
 .progress{width:100%;height:6px;border-radius:20px;background:color-mix(in srgb,var(--muted) 22%,transparent);overflow:hidden}
+.progress-bar{width:100%;height:100%;border-radius:20px;background:linear-gradient(90deg,#7555ff,#4d90ff,#e65dcc);transition:width .5s}
+.counter.pro{background:linear-gradient(135deg,#fbbf24,#f59e0b);border:none}
+.counter.pro .counter-top,.counter.pro .counter-top strong,.counter.pro .counter-top span{color:#fff}
+
+/* ── MAIN ── */
+main{padding:10px 14px calc(170px + var(--safe-b))}
+.welcome{padding:30px 4px 14px;text-align:center}
+.big-logo{width:76px;height:76px;margin:0 auto 18px;border-radius:26px;display:grid;place-items:center;font-size:36px;color:#fff;background:var(--grad);box-shadow:0 22px 55px rgba(105,75,255,.45),inset 0 1px 0 rgba(255,255,255,.35);animation:float 5s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+.welcome h1{font-size:25px;line-height:1.5;font-weight:800}
+.gradient-text{background:linear-gradient(90deg,#9a7dff,#5ba0ff,#f06ad0);-webkit-background-clip:text;background-clip:text;color:transparent}
+.welcome p{color:var(--muted);font-size:13px;margin-top:4px}
+.suggestions{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:22px}
+.suggestion{text-align:right;min-height:104px;padding:14px;border-radius:22px;background:var(--card);border:1px solid var(--border);box-shadow:var(--glass-hi);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);transition:transform .25s,border-color .25s,background .25s;color:var(--text)}
+.suggestion:hover{border-color:color-mix(in srgb,var(--c,var(--primary)) 55%,transparent);background:color-mix(in srgb,var(--c,var(--primary)) 7%,var(--card))}
+.suggestion:active{transform:scale(.97)}
+.s-icon{width:36px;height:36px;display:grid;place-items:center;border-radius:12px;margin-bottom:10px;font-size:18px;color:var(--c,var(--primary));background:color-mix(in srgb,var(--c,var(--primary)) 16%,transparent)}
+.suggestion strong{display:block;font-size:12.5px;margin-bottom:2px}
+.suggestion span{display:block;color:var(--muted);font-size:10px;line-height:1.6}
+
+/* ── CHAT: المستخدم يمين، الذكاء الاصطناعي يسار ── */
+.chat{display:none;flex-direction:column;gap:18px;padding-top:8px}
+.chat.active{display:flex}
+.message{display:flex;flex-direction:column;gap:6px;max-width:88%;width:fit-content;animation:messageIn .3s ease;position:relative}
+@keyframes messageIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+/* في RTL: flex-start = يمين، flex-end = يسار */
+.message.user{align-self:flex-start}
+.message.ai{align-self:flex-end}
+.msg-meta{display:flex;align-items:center;gap:6px;padding:0 4px;font-size:11px;font-weight:800}
+.message.user .msg-meta{color:var(--muted)}
+.meta-ico{width:22px;height:22px;border-radius:8px;display:grid;place-items:center;color:#fff;font-size:12px;background:var(--grad);box-shadow:0 4px 12px rgba(101,80,255,.4)}
+.message.ai .meta-name{background:linear-gradient(90deg,#9a7dff,#5ba0ff,#f06ad0);-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:.4px}
+.bubble{padding:11px 15px;border-radius:20px;font-size:13px;line-height:1.9;word-wrap:break-word;overflow-wrap:anywhere;min-width:0}
+.message.ai .bubble{background:var(--ai);border:1px solid var(--border);border-top-left-radius:6px;box-shadow:var(--glass-hi);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.message.user .bubble{color:#fff;background:linear-gradient(135deg,#7f5cff,#4f7df5);border-top-right-radius:6px;box-shadow:0 10px 28px rgba(95,80,255,.32),inset 0 1px 0 rgba(255,255,255,.22)}
 .bubble h1,.bubble h2,.bubble h3{margin:8px 0 4px;font-size:15px}
 .bubble p{margin:5px 0}
 .bubble ul,.bubble ol{padding-right:20px;margin:5px 0}
