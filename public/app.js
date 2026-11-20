@@ -570,3 +570,107 @@ async function transcribe(blob) {
     toast(e.message);
   }
 }
+// ═══════ السجل، الحسابات، Pro، الإعدادات، الصوت، الإدارة ═══════
+
+// ── سجل المحادثات ─────────────────────────────────────────
+function openDrawer() { $('historyDrawer').classList.add('show'); $('drawerOverlay').classList.add('show'); refreshChatList(); }
+function closeDrawer() { $('historyDrawer').classList.remove('show'); $('drawerOverlay').classList.remove('show'); }
+$('historyBtn').addEventListener('click', openDrawer);
+$('closeDrawer').addEventListener('click', closeDrawer);
+$('drawerOverlay').addEventListener('click', closeDrawer);
+$('chatSearch').addEventListener('input', () => refreshChatList($('chatSearch').value.trim()));
+
+async function refreshChatList(filter) {
+  if (!S.user) return;
+  try {
+    const { chats } = await api('/api/chats');
+    const list = $('chatList');
+    const shown = filter ? chats.filter(c => c.title.includes(filter)) : chats;
+    if (!shown.length) {
+      list.innerHTML = '<div class="empty-note">لا توجد محادثات' + (filter ? ' مطابقة' : '') + '</div>';
+      return;
+    }
+    list.innerHTML = shown.map(c => `
+      <div class="chat-item ${c.id === S.chatId ? 'active' : ''}" data-id="${c.id}">
+        ${ico('message-square')}
+        <div style="flex:1;min-width:0">
+          <div class="t">${escapeHtml(c.title)}</div>
+          <div class="d">${new Date(c.updatedAt).toLocaleDateString('ar-MA')} · ${c.messageCount} رسالة</div>
+        </div>
+        <button class="del" data-del="${c.id}" title="حذف" aria-label="حذف">${ico('trash-2')}</button>
+      </div>`).join('');
+  } catch (_) {}
+}
+
+$('chatList').addEventListener('click', async e => {
+  const delBtn = e.target.closest('[data-del]');
+  if (delBtn) {
+    e.stopPropagation();
+    if (!confirm('حذف هذه المحادثة نهائياً؟')) return;
+    try { await api('/api/chats/' + delBtn.dataset.del, { method: 'DELETE' }); refreshChatList(); } catch (_) {}
+    return;
+  }
+  const item = e.target.closest('.chat-item');
+  if (!item) return;
+  await loadChat(item.dataset.id);
+  closeDrawer();
+});
+
+async function loadChat(id) {
+  try {
+    const { chat } = await api('/api/chats/' + id);
+    S.chatId = chat.id;
+    chatEl.innerHTML = '';
+    enterChat();
+    for (const m of chat.messages) {
+      chatEl.appendChild(messageEl(m.role, m.content));
+    }
+    scrollBottom(false);
+  } catch (e) { toast(e.message); }
+}
+
+$('newChatBtn').addEventListener('click', () => {
+  S.chatId = null;
+  chatEl.innerHTML = '';
+  chatEl.classList.remove('active');
+  welcomeEl.style.display = '';
+  closeDrawer();
+  inputEl.focus();
+});
+
+// ── الضغط المطول على رسالة ────────────────────────────────
+let pressTimer = null;
+chatEl.addEventListener('touchstart', e => {
+  const msg = e.target.closest('.message');
+  if (!msg || !msg.dataset.role) return;
+  pressTimer = setTimeout(() => showCtxMenu(msg, e.touches[0].clientX, e.touches[0].clientY), 550);
+}, { passive: true });
+chatEl.addEventListener('touchend', () => clearTimeout(pressTimer));
+chatEl.addEventListener('touchmove', () => clearTimeout(pressTimer));
+chatEl.addEventListener('contextmenu', e => {
+  const msg = e.target.closest('.message');
+  if (msg && msg.dataset.role) { e.preventDefault(); showCtxMenu(msg, e.clientX, e.clientY); }
+});
+function showCtxMenu(msg, x, y) {
+  const menu = $('ctxMenu');
+  const isAi = msg.dataset.role === 'ai';
+  menu.innerHTML = '';
+  const items = [];
+  if (isAi) {
+    items.push(['copy', 'نسخ الإجابة', () => navigator.clipboard.writeText(msg.dataset.text).then(() => toast('تم النسخ'))]);
+    items.push(['volume-2', 'قراءة بصوت عالٍ', () => speak(msg.dataset.text)]);
+    if (S.user && S.user.plan === 'pro') items.push(['refresh-cw', 'إعادة توليد', () => regenerate(msg)]);
+  } else {
+    items.push(['square-pen', 'تعديل وإعادة الإرسال', () => editMessage(msg)]);
+  }
+  items.push(['trash-2', 'حذف من العرض', () => msg.remove()]);
+  for (const [icon, label, fn] of items) {
+    const b = document.createElement('button');
+    b.innerHTML = ico(icon) + '<span>' + label + '</span>';
+    b.addEventListener('click', () => { hideCtxMenu(); fn(); });
+    menu.appendChild(b);
+  }
+  menu.style.display = 'block';
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)) + 'px';
+  menu.style.top = Math.max(8, Math.min(y, window.
