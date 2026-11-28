@@ -1119,34 +1119,3 @@ async function boot() {
   refreshChatList();
 }
 boot();
-// كود التحقق التلقائي باش يبقى المستخدم داخل
-document.addEventListener('DOMContentLoaded', async () => {
-    const savedToken = localStorage.getItem('cosa_token');
-    
-    if (savedToken) {
-        try {
-            // كنقولو للسيرفر: هاك التوكن، عطيني المعلومات ديال هاد المستخدم
-            const res = await fetch('/api/auth/me', {
-                headers: { 'Authorization': 'Bearer ' + savedToken }
-            });
-            
-            if (res.ok) {
-                const data = await res.json();
-                S.token = savedToken;
-                S.user = data.user; 
-                
-                // دخلو ديريكت للواجهة الرئيسية ومسح شاشة تسجيل الدخول
-                closeModal('authModal'); 
-                updateCounter(); 
-                renderAccount(); 
-                refreshChatList();
-                toast('مرحباً بعودتك ' + S.user.name);
-            } else {
-                // إلا كان التوكن خايب ولا سالا، مسحو
-                localStorage.removeItem('cosa_token');
-            }
-        } catch (e) {
-            console.log("Auto-login error", e);
-        }
-    }
-});
