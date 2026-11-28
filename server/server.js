@@ -1,20 +1,4 @@
-// مسار جديد باش نتأكدو من التوكن ونجيبو المستخدم
-app.get('/api/auth/me', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: 'No token' });
-    
-    const token = authHeader.split(' ')[1];
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        // هنا قلب على المستخدم فـ قاعدة البيانات ديالك (users)
-        const user = await db.getUserById(decoded.userId); 
-        
-        if (!user) return res.status(404).json({ error: 'User not found' });
-        res.json({ user });
-    } catch (err) {
-        res.status(401).json({ error: 'Invalid token' });
-    }
-});
+
 // ═══════════════════════════════════════════════════════════
 // COSA AI — Your Intelligent World
 // الخادم الخلفي الآمن: لا مفاتيح في الواجهة، كل التحقق هنا.
